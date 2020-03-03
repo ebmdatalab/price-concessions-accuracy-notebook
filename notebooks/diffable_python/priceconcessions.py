@@ -20,6 +20,10 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
+import matplotlib.dates as mdates
+import seaborn as sns
+from matplotlib.dates import  DateFormatter
+# %matplotlib inline
 from ebmdatalab import bq
 from ebmdatalab import charts
 from ebmdatalab import maps
@@ -30,13 +34,11 @@ from ebmdatalab import maps
 
 # +
 sql = """
-  -- first, we create a temp table with aggregated data for each bnf_code and month,
-  -- which signfic antly reduces runtime for the main query
-  -- first, we create a temp table with aggregated data for each bnf_code and month,
+    -- first, we create a temp table with aggregated data for each bnf_code and month,
   -- which signficantly reduces runtime for the main query
   CREATE TEMP TABLE price_concessions_quantity AS
 SELECT
-  month,
+  month AS month,
   rx.bnf_code AS bnf_code,
   RTRIM(bnf_name) AS bnf_name,
   SUM(quantity) AS quantity,
@@ -66,7 +68,8 @@ ORDER BY
   month ;
   --this is the main query
 SELECT
-  rx.month AS rx_month,
+  FORMAT_TIMESTAMP("%B %Y", rx.month) AS month_string,
+  DATE(rx.month) AS rx_month,
   vmpp.bnf_code AS bnf_code,
   vmpp.nm AS product_name,
   SUM(rx.quantity) AS quantity,
@@ -137,6 +140,7 @@ ON
 WHERE
   rx.month >='2017-01-01'
 GROUP BY
+  month_string,
   rx.month,
   vmpp.bnf_code,
   vmpp.nm,
@@ -148,20 +152,65 @@ ORDER BY
   rx.month
 """
 
-#exportfile = os.path.join("..","data","ncso_df.csv")
-ncso_df = bq.cached_read(sql, csv_path='data/ncso_df.csv')
+exportfile = os.path.join("..","data","ncso_df.csv")
+ncso_df = bq.cached_read(sql, csv_path=exportfile)
 ncso_df["predicted_cost"] = pd.to_numeric(ncso_df["predicted_cost"])
 # -
 
-ncso_sum_df=ncso_df.groupby('rx_month')[['quantity','rolling_ave_quantity','predicted_cost','predicted_cost_rolling','actual_cost']].sum()  #group data to show total per month
+ncso_sum_df=ncso_df.groupby(['month_string','rx_month',])[['quantity','rolling_ave_quantity','predicted_cost','predicted_cost_rolling','actual_cost']].sum()  #group data to show total per month
+
+
 
 ncso_sum_df['difference'] = ncso_sum_df['predicted_cost'] - ncso_sum_df['actual_cost']  #calculate difference between predicted and actual
 
 ncso_sum_df['perc_difference'] = ncso_sum_df['difference'] / ncso_sum_df['actual_cost'] #calculate percentage difference
 
-ax = ncso_sum_df.plot.bar(figsize = (12,6), y='perc_difference')
+# +
+#ncso_sum_df['month'] = ncso_sum_df['rx_month'].dt.strftime('%b %Y')
+# -
+
+ncso_sum_df.sort_values(by=['rx_month'])
+
+ncso_sum_df.reset_index('rx_month')
+
+# +
+#Create stacked graph in Seaborn, using overlayed plots
+#setup style and size
+sns.set_style("white")
+sns.set_context({"figure.figsize": (24, 10)})
+#Plot 1 - "All items"  - will show "other brands" in final plot
+ax = sns.barplot(x="month_string", y="actual_cost",data=ncso_sum_df,color = "lightsteelblue")
+#Plot 2 - overlay - "generic_and_lyrica" series  - will show Lyrica in final plot
+#middle_plot = sns.barplot(x="month_string", y="predicted_cost",data=ncso_df, color = "steelblue")
+##Plot 3 - overlay - "generic" series - shows generic in final plot
+#bottom_plot = sns.barplot(x="month_string", y="difference",data=ncso_df, color = "darkblue")
+
+#create legend
+topbar = plt.Rectangle((0,0),1,1,fc="lightsteelblue", edgecolor = 'none')
+middlebar = plt.Rectangle((0,0),1,1,fc="steelblue", edgecolor = 'none')
+bottombar = plt.Rectangle((0,0),1,1,fc='darkblue',  edgecolor = 'none')
+l = plt.legend([bottombar, middlebar, topbar], ['Generic', 'Lyrica', 'Other Brands'], loc=0, ncol = 3, prop={'size':16})
+l.draw_frame(False)
+
+#axes formatting
+sns.despine(left=True)
+plt.xticks(rotation=90)
+bottom_plot.set_ylabel("Items for pregabalin capsules")
+bottom_plot.set_xlabel("Month")
+for item in ([bottom_plot.xaxis.label, bottom_plot.yaxis.label] +
+             bottom_plot.get_xticklabels() + bottom_plot.get_yticklabels()):
+    item.set_fontsize(16)
+plt.subplots_adjust(bottom = 0.3)
+plt.savefig('Figure 1.png', format='png', dpi=300)
+# -
+
+ncso_sum_df.dtypes
+
+ax = sns.barplot(x="month_string", y="perc_difference",data=ncso_sum_df,color = "lightsteelblue")
 
 ncso_sum_df['difference_rolling'] = ncso_sum_df['predicted_cost_rolling'] - ncso_sum_df['actual_cost']  #calculate difference between 3 month average rolling predicted and actual
+
+ncso_df.dtypes
 
 ncso_sum_df['perc_difference_rolling'] = ncso_sum_df['difference_rolling'] / ncso_sum_df['actual_cost'] #calculate percentage difference on 3 month rolling
 
