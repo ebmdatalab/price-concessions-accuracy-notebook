@@ -149,7 +149,12 @@ exportfile = os.path.join("..","data","ncso_df.csv")
 ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False)
 ncso_df["predicted_cost"] = pd.to_numeric(ncso_df["predicted_cost"])
 ncso_df['rx_month'] = ncso_df['rx_month'].astype('datetime64[ns]')
+ncso_df.head(10)
 # -
+
+## ensuring the format is consistent for pounds and pence
+pd.set_option('display.float_format', lambda x: '%.2f' % x)
+
 
 ncso_sum_df=ncso_df.groupby(['rx_month',])[['predicted_cost','predicted_cost_rolling','actual_cost']].sum()  #group data to show total per month
 ncso_sum_df['difference'] = ncso_sum_df['predicted_cost'] - ncso_sum_df['actual_cost']  #calculate difference between predicted and actual
@@ -165,8 +170,10 @@ ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['rx_month'].dt.strft
 ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
 ax.set_title('Percentage difference between forecasted price concession costs and actual spend')
 
+# +
 ncso_total_df['mean_difference'] = ncso_total_df['difference']/ncso_total_df['actual_cost']
 ncso_total_df['mean_difference']*100
+# -
 
 
 ncso_sum_df['difference_rolling'] = ncso_sum_df['predicted_cost_rolling'] - ncso_sum_df['actual_cost']  #calculate difference between 3 month average rolling predicted and actual
@@ -177,3 +184,5 @@ ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['rx_month'].dt.strft
 ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
 ax.set_title('Percentage difference between forecasted price concession costs, \nrolling 3 month average forecast and actual spend')
 ax.legend(["Single month forecast", "Rolling 3 month forecast"])
+
+
