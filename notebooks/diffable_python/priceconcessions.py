@@ -20,6 +20,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
+import matplotlib.ticker as ticker
 import matplotlib.dates as mdates
 import seaborn as sns
 from matplotlib.dates import  DateFormatter
@@ -34,9 +35,10 @@ from ebmdatalab import maps
 
 # +
 sql = """
-    -- first, we create a temp table with aggregated data for each bnf_code and month,
+  -- First we create a temp table with aggregated data for each bnf_code and month,
   -- which signficantly reduces runtime for the main query
-  CREATE TEMP TABLE price_concessions_quantity AS
+
+CREATE TEMP TABLE price_concessions_quantity AS
 SELECT
   month AS month,
   rx.bnf_code AS bnf_code,
@@ -45,7 +47,7 @@ SELECT
   SUM(actual_cost) AS actual_cost,
   AVG(SUM(quantity)) OVER (PARTITION BY rx.bnf_code ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS rolling_ave_quantity -- this creates a 3 month rolling average of quantity
 FROM
-  hscic.normalised_prescribing_standard AS rx
+  hscic.normalised_prescribing AS rx
 INNER JOIN (
   SELECT
     bnf_code
@@ -66,9 +68,10 @@ GROUP BY
 ORDER BY
   bnf_code,
   month ;
+  
   --this is the main query
+  
 SELECT
-  FORMAT_TIMESTAMP("%B %Y", rx.month) AS month_string,
   DATE(rx.month) AS rx_month,
   vmpp.bnf_code AS bnf_code,
   vmpp.nm AS product_name,
@@ -76,44 +79,41 @@ SELECT
   SUM(rx.rolling_ave_quantity) AS rolling_ave_quantity,
   dt.price_pence AS dt_price_pence,
   ncso.price_pence AS ncso_price_pence,
-  SUM((dt.price_pence * rx_item.quantity *
-      CASE WHEN
-      -- This uses quantity from 2 months prior to the prescribing month.
-      -- This is the data available at the time of the price concession announcement,
-      -- so we use this to predict.
-      -- For some presentations "quantity" means "number of packs" rather
-      -- than e.g. tablets. In these cases we don't want to divide by the
-      -- quantity value of a pack. This is implemented via a flag in our
-      -- databse but this data isn't in BiqQuery so we just have a hardcoded
-      -- list of BNF codes here
-      vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
-      ELSE
+  
+  SUM((dt.price_pence * 
+       rx_item.quantity *
+          -- This uses quantity from 2 months prior to the prescribing month.
+          -- This is the data available at the time of the price concession announcement,
+          -- so we use this to predict.
+
+      --vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
+      --ELSE
       1 / vmpp.qtyval
-    END
+      --END
       -- This is the "discount factor" which applies the National Average 7.2%
       -- discount to estimate Actual Cost from Net Ingredient Cost and also
       -- converts figures from pence to pounds
       * 0.00928)+ (COALESCE(ncso.price_pence - dt.price_pence,
         0) * rx_item.quantity *
-      CASE
-        WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
-      ELSE
+      --CASE
+      --  WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
+      --ELSE
       1 / vmpp.qtyval
-    END
+      --END
       * 0.00928)) AS predicted_cost,
   SUM((dt.price_pence * rx_item.rolling_ave_quantity * -- this is using 3 months rolling quantity average
-      CASE
-        WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
-      ELSE
+      --CASE
+      --  WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
+      --ELSE
       1 / vmpp.qtyval
-    END
+    --END
       * 0.00928)+ (COALESCE(ncso.price_pence - dt.price_pence,
         0) * rx_item.rolling_ave_quantity *
-      CASE
-        WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
-      ELSE
+      --CASE
+        --WHEN vmpp.bnf_code IN ('0206010F0AACJCJ', '1202010U0AAAAAA') THEN 1
+      --ELSE
       1 / vmpp.qtyval
-    END
+    --END
       * 0.00928)) AS predicted_cost_rolling,
   SUM(rx.actual_cost) AS actual_cost
 FROM
@@ -140,7 +140,6 @@ ON
 WHERE
   rx.month >='2017-01-01'
 GROUP BY
-  month_string,
   rx.month,
   vmpp.bnf_code,
   vmpp.nm,
@@ -148,73 +147,38 @@ GROUP BY
   ncso.price_pence,
   TIMESTAMP(DATE_ADD(ncso.date, INTERVAL -2 month))
 ORDER BY
-  vmpp.bnf_code,
+  vmpp.bnf_code, 
   rx.month
 """
 
 exportfile = os.path.join("..","data","ncso_df.csv")
-ncso_df = bq.cached_read(sql, csv_path=exportfile)
+ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False)
 ncso_df["predicted_cost"] = pd.to_numeric(ncso_df["predicted_cost"])
+ncso_df['rx_month'] = ncso_df['rx_month'].astype('datetime64[ns]')
 # -
 
-ncso_sum_df=ncso_df.groupby(['month_string','rx_month',])[['quantity','rolling_ave_quantity','predicted_cost','predicted_cost_rolling','actual_cost']].sum()  #group data to show total per month
-
-
-
+ncso_sum_df=ncso_df.groupby(['rx_month',])[['quantity','rolling_ave_quantity','predicted_cost','predicted_cost_rolling','actual_cost']].sum()  #group data to show total per month
 ncso_sum_df['difference'] = ncso_sum_df['predicted_cost'] - ncso_sum_df['actual_cost']  #calculate difference between predicted and actual
-
 ncso_sum_df['perc_difference'] = ncso_sum_df['difference'] / ncso_sum_df['actual_cost'] #calculate percentage difference
+ncso_sum_df.sort_values(by=['rx_month']) #sort values by month for chart
 
-# +
-#ncso_sum_df['month'] = ncso_sum_df['rx_month'].dt.strftime('%b %Y')
-# -
+ncso_sum_df.reset_index(inplace=True)
 
-ncso_sum_df.sort_values(by=['rx_month'])
+ax = ncso_sum_df.plot.bar(figsize = (12,6), y= ['perc_difference'], legend=None)
+ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['rx_month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
+ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
+ax.set_title('Percentage difference between forecasted price concession costs and actual spend')
 
-ncso_sum_df.reset_index('rx_month')
-
-# +
-#Create stacked graph in Seaborn, using overlayed plots
-#setup style and size
-sns.set_style("white")
-sns.set_context({"figure.figsize": (24, 10)})
-#Plot 1 - "All items"  - will show "other brands" in final plot
-ax = sns.barplot(x="month_string", y="actual_cost",data=ncso_sum_df,color = "lightsteelblue")
-#Plot 2 - overlay - "generic_and_lyrica" series  - will show Lyrica in final plot
-#middle_plot = sns.barplot(x="month_string", y="predicted_cost",data=ncso_df, color = "steelblue")
-##Plot 3 - overlay - "generic" series - shows generic in final plot
-#bottom_plot = sns.barplot(x="month_string", y="difference",data=ncso_df, color = "darkblue")
-
-#create legend
-topbar = plt.Rectangle((0,0),1,1,fc="lightsteelblue", edgecolor = 'none')
-middlebar = plt.Rectangle((0,0),1,1,fc="steelblue", edgecolor = 'none')
-bottombar = plt.Rectangle((0,0),1,1,fc='darkblue',  edgecolor = 'none')
-l = plt.legend([bottombar, middlebar, topbar], ['Generic', 'Lyrica', 'Other Brands'], loc=0, ncol = 3, prop={'size':16})
-l.draw_frame(False)
-
-#axes formatting
-sns.despine(left=True)
-plt.xticks(rotation=90)
-bottom_plot.set_ylabel("Items for pregabalin capsules")
-bottom_plot.set_xlabel("Month")
-for item in ([bottom_plot.xaxis.label, bottom_plot.yaxis.label] +
-             bottom_plot.get_xticklabels() + bottom_plot.get_yticklabels()):
-    item.set_fontsize(16)
-plt.subplots_adjust(bottom = 0.3)
-plt.savefig('Figure 1.png', format='png', dpi=300)
-# -
-
-ncso_sum_df.dtypes
-
-ax = sns.barplot(x="month_string", y="perc_difference",data=ncso_sum_df,color = "lightsteelblue")
+ncso_sum_df['perc_difference'].std()
 
 ncso_sum_df['difference_rolling'] = ncso_sum_df['predicted_cost_rolling'] - ncso_sum_df['actual_cost']  #calculate difference between 3 month average rolling predicted and actual
-
-ncso_df.dtypes
-
 ncso_sum_df['perc_difference_rolling'] = ncso_sum_df['difference_rolling'] / ncso_sum_df['actual_cost'] #calculate percentage difference on 3 month rolling
 
-ax = ncso_sum_df.plot.bar(figsize = (12,6), y=['perc_difference_rolling', 'perc_difference'])
+ax = ncso_sum_df.plot.bar(figsize = (12,6), y=['perc_difference', 'perc_difference_rolling'])
+ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['rx_month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
+ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
+ax.set_title('Percentage difference between forecasted price concession costs, \nrolling 3 month average forecast and actual spend')
+ax.legend(["Single month forecast", "Rolling 3 month forecast"])
 
 # ### How could we get more accuracy?
 
@@ -258,54 +222,29 @@ dates.set_index('rx_month')
 
 ncso_sum_df.reset_index()
 
-ncso_sum_df.dtypes
-
-result = pd.merge(ncso_sum_df, dates, on='rx_month')
-
-result.dtypes
-
-import calendar
-dates = ncso_dates_df[["rx_month"]].drop_duplicates()
-dates["rx_month"] = pd.to_datetime(dates["rx_month"])
-dates["year"] = dates["rx_month"].dt.year
-dates["mon"] = dates["rx_month"].dt.month
-d = []
-for row in dates.itertuples():
-    y = row.year
-    m = row.mon
-    day = calendar.monthrange(y,m)[1]
-    d.append(str(y)+"-"+str(m)+"-"+str(day))
-d = pd.Series(d, name="enddates")
-d = pd.to_datetime(d, format="%Y/%m/%d")
-begindates = pd.Series(dates["rx_month"]).values.astype('datetime64[D]')
-enddates = pd.Series(d).values.astype('datetime64[D]')
-#######
-# find business days in month
-dates["bdays0"] = np.busday_count(begindates, enddates) # not excluding bank holidays
-dates["bdays"] = np.busday_count(begindates, enddates, holidays=bh2["date"].values.astype('datetime64[D]'))
-dates.head()
-
-dates.set_index('rx_month')
+ncso_sum_df = pd.merge(ncso_sum_df, dates, on='rx_month')
 
 dates.index = pd.to_datetime(dates.index)
 
 #dates['pred_month'] = dates.lookup(dates.index, dates['bdays'])
-result['bdays2']=result['bdays'].shift(2)
+ncso_sum_df['bdays2']=ncso_sum_df['bdays'].shift(2)
 
-result.head()
+ncso_sum_df.head()
 
-result['predicted_cost_adj']=(result['bdays2']/result['bdays'])*result['predicted_cost']
+ncso_sum_df['predicted_cost_work_days_adj']=(ncso_sum_df['bdays2']/ncso_sum_df['bdays'])*result['predicted_cost']
+ncso_sum_df['difference_work_day_adj']=ncso_sum_df['predicted_cost_work_days_adj']-ncso_sum_df['actual_cost']
+ncso_sum_df['percent_difference_work_days_adj']=ncso_sum_df['difference_work_day_adj']/ncso_sum_df['actual_cost']
 
-result['difference_adj']=result['predicted_cost_adj']-result['actual_cost']
+ax = ncso_sum_df.plot.bar(figsize = (12,6), x='rx_month', y='percent_difference_work_days_adj')
 
-result['percent_difference_adj']=result['difference_adj']/result['actual_cost']
+ax = ncso_sum_df.plot.bar(figsize = (12,6), y=['perc_difference', 'perc_difference_rolling', 'percent_difference_work_days_adj'])
+ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['rx_month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
+ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
+#ax.set_title('Percentage difference between forecasted price concession costs, \nrolling 3 month average forecast and actual spend')
+#ax.legend(["Single month forecast", "Rolling 3 month forecast"])
 
-ax = result.plot.bar(figsize = (12,6), x='rx_month', y='percent_difference_adj')
-
-result.head(25)
+ncso_sum_df.head(25)
 
 result.describe()
-
-result['perc_difference'].mean()
 
 
