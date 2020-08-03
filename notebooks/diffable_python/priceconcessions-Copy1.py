@@ -31,7 +31,7 @@ from ebmdatalab import bq
 from ebmdatalab import charts
 from ebmdatalab import maps
 
-# The DataLab created a predictive tool to help NHS England, CCGs, PCNs and practice to understand the impact of price concessions on their spend.  Give the delay in getting prescribing data for the month involved, the tool uses the latest avaialble prescribing data, which is two months behind.
+# The DataLab created a predictive [price concessions dashboard tool to help NHS England](https://openprescribing.net/national/england/concessions/), CCGs, PCNs and practice to understand the impact of price concessions on their spend.  Give the delay in getting prescribing data for the month involved, the tool uses the latest avaialble prescribing data, which is two months behind.
 #
 # Therefore, to calculate the effect of the price concession for May 2020, the tool will:
 #
@@ -146,7 +146,7 @@ ORDER BY
 """
 
 exportfile = os.path.join("..","data","ncso_df.csv")
-ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False)
+ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=True)
 ncso_df["predicted_cost"] = pd.to_numeric(ncso_df["predicted_cost"])
 ncso_df['rx_month'] = ncso_df['rx_month'].astype('datetime64[ns]')
 ncso_df.head(10)
