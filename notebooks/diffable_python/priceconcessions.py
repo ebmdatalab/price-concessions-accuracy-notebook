@@ -229,6 +229,8 @@ dates['dispdays_predict_weighting'] = dates['dispdays']/dates['dispdays'].shift(
 #dates = dates.set_index('month')
 dates = dates.sort_values(by=['month']) #sort values by month for chart
 
+dates.head()
+
 # We can also weight the effect that number of days in a month has by looking at the number of items prescribed in each month in six major chapters of the BNF, and see how it changes throughout the year, using the methodology below.  We are using five years worth of data, ending in February 2020, as the pandemic affected the number of items prescribed per month from March 2020 onwards.
 
 # +
