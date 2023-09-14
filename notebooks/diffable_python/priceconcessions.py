@@ -41,8 +41,10 @@ import matplotlib.dates as mdates
 # %matplotlib inline
 from ebmdatalab import bq
 from ebmdatalab import charts
+import lxml
 #from ebmdatalab import maps
-#import datetime as dt
+#import datetime as dtimport datetime
+import datetime
 
 # We need to import data from BigQuery to undertake the analysis.
 #
@@ -120,11 +122,11 @@ ON
   AND rx.bnf_code = ncso.bnf_code
 WHERE rx.month >='2017-02-01'
 ORDER BY
-  rx.month
+  rx.month 
 """
 
 exportfile = os.path.join("..","data","ncso_df.csv") #defines name for cache file
-ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=True) #uses BQ if changed, otherwise csv cache file
+ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False) #uses BQ if changed, otherwise csv cache file
 ncso_df['month'] = ncso_df['month'].astype('datetime64[ns]') #ensure dates are in datetimeformat
 ncso_df['normal_nic_per_unit'] = ncso_df['normal_nic_per_unit'].astype(float) #ensure in float format
 ncso_df['predicted_nic_per_unit'] = ncso_df['predicted_nic_per_unit'].astype(float) #ensure in float format
@@ -162,7 +164,7 @@ ax.set_title('Percentage difference between forecasted price concession costs an
 ncso_fy_df = ncso_sum_df.groupby([pd.Grouper(key='month', freq="A-MAR")])[["actual_cost","predicted_actual_cost","prediction_difference"]].sum() #groups by financial year
 ncso_fy_df['perc_difference'] = ncso_fy_df['prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference 
 ncso_fy_df.reset_index(inplace=True)
-ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
+#ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
 ncso_fy_df = ncso_fy_df.reset_index(drop=True)
 
 ncso_fy_df.style
@@ -184,14 +186,43 @@ ax.set_title('Percentage difference between forecasted price concession costs an
 
 # When the price concessions tool was built a few years ago, we decided to use the NADP that was available at the time (7.2%).  Since then it has fluctuated, and the monthly value (back to 2017) is published on the [NHS BSA website]('https://www.nhsbsa.nhs.uk/prescription-data/understanding-our-data/financial-forecasting').  We can therefore import the data and adjust the prediction calculations accordingly.  We do this in the data below by dividing 7.2% by the actual NADP value, creating a weighting value to adjust the predicted actual cost calculated above.
 
-#import NADP data (to Aug 2022)
-importfile = os.path.join("..","data","nadp_fixed.csv") #define the name of the NADP import file
-nadp_df = pd.read_csv(importfile) #import NADP
-nadp_df['month'] = nadp_df['month'].astype('datetime64[ns]') #ensure correct date format
+# +
+#import NADP data (to Feb 2023)
+#importfile = os.path.join("..","data","nadp_fixed.csv") #define the name of the NADP import file
+#nadp_df = pd.read_csv(importfile) #import NADP
+#nadp_df['month'] = nadp_df['month'].astype('datetime64[ns]') #ensure correct date format
 nadp_df['nadp_weighting'] = (1-(nadp_df['nadp']/100))/0.928 #create weighting of "true" weighting for month vs assumed 7.2%
-ncso_fy_df.reset_index(inplace=True)
+#ncso_fy_df.reset_index(inplace=True)
+
+
+url = 'https://www.nhsbsa.nhs.uk/prescription-data/understanding-our-data/financial-forecasting' #url for NADP
+dfs = pd.read_html(url,match='National Average Discount Percentage') #scrape nadp data from table
+nadp = []
+for i in range(len(dfs)):
+    nadp.append(dfs[i])
+nadp_df = pd.concat(nadp)
+nadp_df.rename(columns={"Used for Reports in": "month", "National Average Discount Percentage": "nadp"}, inplace=True) #rename columns to more manageable names
+nadp_df['month'] = nadp_df['month'].str[:3] + " " + nadp_df['month'].str[-2:] # there was inconsistencies in date naming, so create standardised mmm yy
+
+def date_convert(date_to_convert):
+    return datetime.datetime.strptime(date_to_convert, '%b %y').strftime('%Y-%m-%d') # define datetime function
+    
+nadp_df['month'] = nadp_df['month'].apply(date_convert).astype('datetime64[D]') #convert date string to datetime
+nadp_df['nadp_weighting'] = (1-(nadp_df['nadp']/100))/0.928 #create weighting of "true" weighting for month vs assumed 7.2%
+
+
+
+
+
+
+
+# -
+
+nadp_df.head()
 
 ncso_sum_df =  ncso_sum_df.merge(nadp_df[["month", "nadp_weighting"]]) #add weighting to grouped price concession data
+
+ncso_sum_df.head(200)
 
 # #### Weight for difference in days between prediction and actual months
 
@@ -229,7 +260,7 @@ dates['dispdays_predict_weighting'] = dates['dispdays']/dates['dispdays'].shift(
 #dates = dates.set_index('month')
 dates = dates.sort_values(by=['month']) #sort values by month for chart
 
-dates.head()
+dates.head(200)
 
 # We can also weight the effect that number of days in a month has by looking at the number of items prescribed in each month in six major chapters of the BNF, and see how it changes throughout the year, using the methodology below.  We are using five years worth of data, ending in February 2020, as the pandemic affected the number of items prescribed per month from March 2020 onwards.
 
@@ -263,7 +294,7 @@ WHERE
   AND SUBSTR(bnf_code,0,2) IN ('01',
     '02',
     '03',
-    '04',
+    '04', 
     '06',
     '10')
 GROUP BY
@@ -286,7 +317,7 @@ dates.reset_index(inplace=True)
 # First we need to add the date weighting data to the price concession data
 
 ncso_sum_df =  ncso_sum_df.merge(dates[["month", "workdays_predict_weighting","nobhworkdays_predict_weighting","dispdays_predict_weighting","profile_weighting"]]) #add weighting to grouped price concession data
-ncso_sum_df.head() #show updated dataframe
+ncso_sum_df.head(200) #show updated dataframe
 
 # We now need to see whether the updated NADP improves the prediction further, by calculating the impact of the NADP weighting:
 
@@ -306,7 +337,7 @@ ncso_fy_df = ncso_sum_df.groupby([pd.Grouper(key='month', freq="A-MAR")])[["actu
 ncso_fy_df['perc_difference'] = ncso_fy_df['prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference
 ncso_fy_df['nadp_perc_difference'] = ncso_fy_df['nadp_prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference with NAPD
 ncso_fy_df.reset_index(inplace=True)
-ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
+#ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
 ncso_fy_df = ncso_fy_df.reset_index(drop=True)
 
 #create financial year group 
@@ -350,7 +381,7 @@ ncso_fy_df['perc_difference_nadp_dispdays'] = ncso_fy_df['dispdays_nadp_predicti
 ncso_fy_df['perc_difference_nadp_workdays'] = ncso_fy_df['workdays_nadp_prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference 
 ncso_fy_df['perc_difference_nadp_nobhworkdays'] = ncso_fy_df['nobhworkdays_nadp_prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference 
 ncso_fy_df.reset_index(inplace=True)
-ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
+#ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
 ncso_fy_df = ncso_fy_df.reset_index(drop=True)
 
 #create financial year group 
