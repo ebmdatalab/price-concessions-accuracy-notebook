@@ -41,7 +41,7 @@ exportfile = os.path.join("..","data","ncso_dates.csv") #defines name for cache 
 dates_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False) #uses BQ if changed, otherwise csv cache file
 dates_df['month'] = pd.to_datetime(dates_df['month']) #ensure dates are in datetimeformat
 dates_df = dates_df.sort_values(by=['month','vmpp']) #sort data by month then vmpp
-dates_df.style
+dates_df.head()
 
 #unstacks data, fills missing month data (with zero value where no concession), then restacks
 dates_cons_df = dates_df.set_index(['month','vmpp']).unstack().asfreq('MS').fillna(0).stack().sort_index(level=1).reset_index()
@@ -128,6 +128,8 @@ sql = """
     rx.bnf_code = vmpp.bnf_code
   WHERE
     vmpp.id IN (SELECT DISTINCT vmpp FROM ebmdatalab.dmd.ncsoconcession)
+    AND rx.pct = '15N'
+    AND month >='2022-04-01'
     ORDER BY date_3m_start DESC
 """
 
@@ -149,5 +151,14 @@ rx_df_merge.head()
 rx_df_merge['3_m_additional_cost'] = 0.01*(rx_df_merge['roll_3m_quantity']/rx_df_merge['unit_qty'])*(rx_df_merge['post_pc_price']-rx_df_merge['pre_pc_price'])
 
 rx_df_merge.head()
+
+exportfile = os.path.join("..","data","3_months_post.csv") #defines name for cache file
+rx_df_merge.to_csv(exportfile, index=False)  
+
+rx_sum_df = rx_df_merge.groupby('date_3m_start')['3_m_additional_cost'].sum().to_frame()
+
+rx_sum_df.head(200)
+
+table = rx_df_merge.pivot_table(rx_df_merge, values=['3_m_additional_cost'], index=['date_3m_start'], columns=['nm'], fill_value=0, aggfunc=np.sum, dropna=True)
 
 
