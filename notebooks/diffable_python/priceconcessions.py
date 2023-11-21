@@ -121,12 +121,13 @@ ON
   DATE(rx.month) = ncso.month
   AND rx.bnf_code = ncso.bnf_code
 WHERE rx.month >='2017-02-01'
+  AND rx.month <'2023-04-01' 
 ORDER BY
   rx.month 
 """
 
 exportfile = os.path.join("..","data","ncso_df.csv") #defines name for cache file
-ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False) #uses BQ if changed, otherwise csv cache file
+ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=True) #uses BQ if changed, otherwise csv cache file
 ncso_df['month'] = ncso_df['month'].astype('datetime64[ns]') #ensure dates are in datetimeformat
 ncso_df['normal_nic_per_unit'] = ncso_df['normal_nic_per_unit'].astype(float) #ensure in float format
 ncso_df['predicted_nic_per_unit'] = ncso_df['predicted_nic_per_unit'].astype(float) #ensure in float format
@@ -191,7 +192,7 @@ ax.set_title('Percentage difference between forecasted price concession costs an
 #importfile = os.path.join("..","data","nadp_fixed.csv") #define the name of the NADP import file
 #nadp_df = pd.read_csv(importfile) #import NADP
 #nadp_df['month'] = nadp_df['month'].astype('datetime64[ns]') #ensure correct date format
-nadp_df['nadp_weighting'] = (1-(nadp_df['nadp']/100))/0.928 #create weighting of "true" weighting for month vs assumed 7.2%
+#nadp_df['nadp_weighting'] = (1-(nadp_df['nadp']/100))/0.928 #create weighting of "true" weighting for month vs assumed 7.2%
 #ncso_fy_df.reset_index(inplace=True)
 
 
@@ -302,7 +303,7 @@ GROUP BY
 """
 
 exportfile = os.path.join("..","data","annual_profile_df.csv")
-annual_profile_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False)
+annual_profile_df = bq.cached_read(sql, csv_path=exportfile, use_cache=True)
 # -
 
 #add the profile data to the existing date dataframe
@@ -322,7 +323,7 @@ ncso_sum_df.head(200) #show updated dataframe
 # We now need to see whether the updated NADP improves the prediction further, by calculating the impact of the NADP weighting:
 
 ncso_sum_df["nadp_predicted_actual_cost"] = ncso_sum_df["predicted_actual_cost"] * ncso_sum_df["nadp_weighting"] # calculate the predicted actual cost using NADP weighting
-ncso_sum_df["nadp_prediction_difference"] = ncso_sum_df["nadp_predicted_actual_cost"] - ncso_sum_df["actual_cost"] # calculate #difference using NADP
+ncso_sum_df["nadp_prediction_difference"] = ncso_sum_df["actual_cost"] - ncso_sum_df["nadp_predicted_actual_cost"] # calculate #difference using NADP
 ncso_sum_df['nadp_perc_difference'] = ncso_sum_df['nadp_prediction_difference'] / ncso_sum_df['actual_cost'] #calculate percentage difference using NADP
 ncso_sum_df.reset_index(drop=True)
 
@@ -347,7 +348,7 @@ ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y
 ax.set_xlabel("Financial Year ending")
 ax.set_title('Percentage difference between forecasted price concession costs and actual spend (financial year) NADP')
 
-# We can see from the graph above that there is a *slight* improvement for most financial years by adding in an adjustment for correct NADP, rather than the fixed value we currently use.
+# We can see from the graph above that there is a *slight* improvement for most financial years by adding in an adjustment for correct NADP, rather than the fixed value we currently use.  The improvement appears to increase with time.
 
 # We can now calculate how the different weightings for adjusting for days in the month affect the accuracy of the prediction, using the monthly NADP:
 
