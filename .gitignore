@@ -1,3 +1,4 @@
+# Credentials for accessing BigQuery
 bq-service-account.json
 
 # Byte-compiled / optimized / DLL files
@@ -20,3 +21,4 @@ __pycache__/
 
 # Emacs
 *~
+

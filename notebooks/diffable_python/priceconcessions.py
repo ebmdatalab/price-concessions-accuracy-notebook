@@ -31,19 +31,14 @@
 import os
 import pandas as pd
 import numpy as np
-#import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
 import matplotlib.ticker as ticker
 import matplotlib.dates as mdates
-#import seaborn as sns
-#from matplotlib.dates import  DateFormatter
 # %matplotlib inline
 from ebmdatalab import bq
 from ebmdatalab import charts
 import lxml
-#from ebmdatalab import maps
-#import datetime as dtimport datetime
 import datetime
 
 # We need to import data from BigQuery to undertake the analysis.
@@ -120,15 +115,15 @@ INNER JOIN
 ON
   DATE(rx.month) = ncso.month
   AND rx.bnf_code = ncso.bnf_code
-WHERE rx.month >='2017-02-01'
-  AND rx.month <'2023-04-01' 
+WHERE
+    rx.month between '2017-01-01' and '2023-12-01'
 ORDER BY
   rx.month 
 """
 
 exportfile = os.path.join("..","data","ncso_df.csv") #defines name for cache file
-ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=True) #uses BQ if changed, otherwise csv cache file
-ncso_df['month'] = ncso_df['month'].astype('datetime64[ns]') #ensure dates are in datetimeformat
+ncso_df = bq.cached_read(sql, csv_path=exportfile, use_cache=False) #uses BQ if changed, otherwise csv cache file
+ncso_df['month'] = pd.to_datetime(ncso_df['month']) #ensure dates are in datetimeformat
 ncso_df['normal_nic_per_unit'] = ncso_df['normal_nic_per_unit'].astype(float) #ensure in float format
 ncso_df['predicted_nic_per_unit'] = ncso_df['predicted_nic_per_unit'].astype(float) #ensure in float format
 # -
@@ -137,45 +132,75 @@ ncso_df['predicted_nic_per_unit'] = ncso_df['predicted_nic_per_unit'].astype(flo
 # - Using a fixed 7.2% [Average National Discount Percentage (NADP)](https://digital.nhs.uk/data-and-information/areas-of-interest/prescribing/practice-level-prescribing-in-england-a-summary/practice-level-prescribing-glossary-of-terms#actual-cost)
 # - Using the latest data available at the time of estimate (usually two months behind)
 #
-# We calculate the costs by multiplying the unit quantity dispensed two months previously by the predicted cost per unit geenerated in the SQL above * 0.928.  This gives us the predicted actual cost, which we then compare to the actual amount spend in that month, and calculate the difference.
+# We calculate the costs by multiplying the unit quantity dispensed two months previously by the predicted cost per unit generated in the SQL above * 0.928.  This gives us the predicted actual cost, which we then compare to the actual amount spend in that month, and calculate the difference.
 
 #calculate predicted costs for each drug
 ncso_df['predicted_actual_cost'] = ncso_df['quantity_2_months_previously'] * ncso_df['predicted_nic_per_unit'] * 0.928 #calculate predicted actual cost - multiply by 0.928 to get actual cost, using 2 months earlier quantity data as a prediction
 ncso_df['prediction_difference'] = ncso_df['actual_cost'] - ncso_df['predicted_actual_cost'] #calculate difference in costs
 
+# +
 #create total monthly data
-ncso_sum_df=ncso_df.groupby(['month',])[['actual_cost','predicted_actual_cost', 'prediction_difference']].sum()  #group data to show total per month
+ncso_sum_df=ncso_df.groupby(['month',])[['actual_cost','predicted_actual_cost', 'prediction_difference']].sum().reset_index()  #group data to show total per month
+
+ncso_sum_df['month'] = pd.to_datetime(ncso_sum_df['month'])
 ncso_sum_df['perc_difference'] = ncso_sum_df['prediction_difference'] / ncso_sum_df['actual_cost'] #calculate percentage difference
 ncso_sum_df.sort_values(by=['month']) #sort values by month for chart
-ncso_sum_df.reset_index(inplace=True)
+#ncso_sum_df['month'] = pd.to_datetime(ncso_sum_df['month'])
+#ncso_sum_df.set_index(inplace=True)
+ncso_sum_df['year'] = ncso_sum_df['month'].dt.year #add year column for grouping by year
+# -
 
 #create chart
-ax = ncso_sum_df.plot.bar(figsize = (12,6), y= ['perc_difference'], legend=None)
-ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
+ax = ncso_sum_df.plot.bar(figsize = (12,6))
+ncso_sum_df['month'] = pd.to_datetime(ncso_sum_df['month'])
+ax.bar(ncso_sum_df['month'], ncso_sum_df['perc_difference'])
+ax.xaxis_date()
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+#ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_sum_df['month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
 ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
 ax.set_title('Percentage difference between forecasted price concession costs and actual spend')
 
+# +
+x = [datetime.datetime(2010, 12, 1, 10, 0),
+    datetime.datetime(2011, 1, 4, 9, 0),
+    datetime.datetime(2011, 5, 5, 9, 0)]
+y = [4, 9, 2]
+
+ax = plt.subplot(111)
+ax.bar(x, y, width=10)
+ax.xaxis_date()
+
+plt.show()
+# -
+
 # As we can see from the chart above, on a monthly basis the price concession data is usually accurate to within 5%.  The tool usually *overestimates* (i.e. a negative percentage) in February of each year, due to the difference in working or dispensing days between the actual month and the month used for prediction (December).  
 
-# ### Impact within Financial Year
+# ### Impact within Year
 
-# As the tool is mainly used to estimate the impact on finances within the NHS due to price concessions, it is also useful to see how accurate the tool is over the whole of a financial year.  Aggregating the data over a financial year is also a useful way of describe the average accuracy, which will always be flucuating on a monthly basis.
+# As the tool is mainly used to estimate the impact on finances within the NHS due to price concessions, it is also useful to see how accurate the tool is over the whole year.  Aggregating the data over a financial year is also a useful way of describe the average accuracy, which will always be flucuating on a monthly basis.
 
-#create financial year grouping
-ncso_fy_df = ncso_sum_df.groupby([pd.Grouper(key='month', freq="A-MAR")])[["actual_cost","predicted_actual_cost","prediction_difference"]].sum() #groups by financial year
+# +
+#create year grouping
+#ncso_sum_df.reset_index(inplace=True)
+#ncso_sum_df= ncso_sum_df.reset_index('month', drop=True)
+ncso_fy_df = ncso_sum_df.groupby(["year"])[["actual_cost","predicted_actual_cost","prediction_difference"]].sum() #groups by calendar year
 ncso_fy_df['perc_difference'] = ncso_fy_df['prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference 
 ncso_fy_df.reset_index(inplace=True)
-#ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2022-03-31")]
-ncso_fy_df = ncso_fy_df.reset_index(drop=True)
+#ncso_fy_df = ncso_fy_df.loc[ncso_fy_df["month"].between("2017-04-01", "2023-12-31")]
+#ncso_fy_df.groupby(ncso_fy_df["year"]).filter(lambda x: len(x) == 12)
+# -
 
-ncso_fy_df.style
 
-#create financial year group 
+print(ncso_sum_df)
+
+ncso_sum_df.head()
+
+#create  year group 
 ax = ncso_fy_df.plot.bar(figsize = (12,6),  y= ['perc_difference'], legend=None)
-ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_fy_df['month'].dt.strftime("%b %Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
+ax.xaxis.set_major_formatter(plt.FixedFormatter(ncso_fy_df['month'].dt.strftime("%Y"))) #this formats date as string in desired format for x axis, formats here: https://www.ibm.com/support/knowledgecenter/SS6V3G_5.3.1/com.ibm.help.gswapplintug.doc/GSW_strdate.html
 ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y axis labels as percent (and formats correctly i.e. x100)
-ax.set_xlabel("Financial Year ending")
-ax.set_title('Percentage difference between forecasted price concession costs and actual spend (financial year)')
+ax.set_xlabel("Year")
+ax.set_title('Percentage difference between forecasted price concession costs and actual spend')
 
 # As can be seen from the above, in four out of the five previous financial years the prediction tool correctly estimated within 2%.  The outlying year was 2019-2020, where the underestimation was likely to be due to the significant increase in items in March 2020 due to the onset of the coronavirus pandemic.
 
@@ -219,7 +244,7 @@ nadp_df['nadp_weighting'] = (1-(nadp_df['nadp']/100))/0.928 #create weighting of
 
 # -
 
-nadp_df.head()
+nadp_df.head(200)
 
 ncso_sum_df =  ncso_sum_df.merge(nadp_df[["month", "nadp_weighting"]]) #add weighting to grouped price concession data
 
@@ -334,7 +359,7 @@ ax.yaxis.set_major_formatter(ticker.PercentFormatter(1, decimals=None)) ##sets y
 ax.set_title('Percentage difference between forecasted price concession costs and actual spend, using NAPD')
 
 #create financial year grouping
-ncso_fy_df = ncso_sum_df.groupby([pd.Grouper(key='month', freq="A-MAR")])[["actual_cost","predicted_actual_cost","prediction_difference", "nadp_predicted_actual_cost","nadp_prediction_difference"]].sum() #groups by financial year
+ncso_fy_df = ncso_sum_df.groupby([pd.Grouper(key='month', freq="Y")])[["actual_cost","predicted_actual_cost","prediction_difference", "nadp_predicted_actual_cost","nadp_prediction_difference"]].sum() #groups by financial year
 ncso_fy_df['perc_difference'] = ncso_fy_df['prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference
 ncso_fy_df['nadp_perc_difference'] = ncso_fy_df['nadp_prediction_difference'] / ncso_fy_df['actual_cost'] #recalculate percentage difference with NAPD
 ncso_fy_df.reset_index(inplace=True)
